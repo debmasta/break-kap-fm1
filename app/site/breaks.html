@@ -233,7 +233,7 @@ function peakNorm(x) {
   for (const v of x) p = Math.max(p, Math.abs(v));
   return x.map((v) => v * 0.98 / p);
 }
-function slicePoints(x, n, hits) {         /* sixteen, moved to the strongest onset within a third of a slice */
+function slicePoints(x, n, hits) {         /* sixteen, moved to the strongest onset within a third of a 16th (2 bars: 32) */
   const len = x.length;
   let pts = Array.from({ length: n + 1 }, (_, i) => Math.floor(len * i / n));
   if (!hits) return pts;
@@ -245,7 +245,7 @@ function slicePoints(x, n, hits) {         /* sixteen, moved to the strongest on
     env.push(Math.max(0, e - prev));
     prev = e;
   }
-  const reach = Math.floor(Math.floor(len / n) / 3);
+  const reach = Math.floor(Math.floor(len / 32) / 3);
   for (let i = 1; i < n; i++) {
     const lo = Math.max(0, Math.floor((pts[i] - reach) / hop)), hi = Math.min(env.length - 1, Math.floor((pts[i] + reach) / hop));
     if (hi > lo) {

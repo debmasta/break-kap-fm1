@@ -109,6 +109,37 @@ static void test_straight(void)
     wav("straight.wav", buf, 0, bar);
 }
 
+/* slices in order are the record as it is: markers moved onto the hits (off the grid, as --transients makes them)
+ * play exactly what markers on the grid play, one voice running on, no jump, no hit twice */
+static float ref_buf[BRK_SR * 4u];
+static void test_in_order(void)
+{
+    uint32_t bar = (uint32_t)(BRK_SR * 60.0f / BPM * 4.0f), i, len, sixteenth;
+    float worst = 0.0f;
+    int32_t seen, sl[64], ok = 1;
+    fresh(1);
+    brk_play(1);
+    render(ref_buf, 2u * bar, 0, 0, 0);
+    fresh(1);
+    len = brk.len;
+    sixteenth = len / 16u;
+    brk.slice[3] += sixteenth * 2u / 5u;   /* a hit late */
+    brk.slice[6] -= sixteenth * 3u / 5u;   /* a hit early */
+    brk.slice[11] += sixteenth / 4u;
+    brk_set_break(&brk);
+    brk_play(1);
+    render(buf, 2u * bar, &seen, sl, 64);
+    for (i = 0; i < 2u * bar; i++)
+        if (fabsf(buf[i] - ref_buf[i]) > worst)
+            worst = fabsf(buf[i] - ref_buf[i]);
+    CHECK(worst < 1e-4f, "slices in order with markers off the grid play as on it (worst %g)", (double)worst);
+    for (i = 0; i < 16 && (int32_t)i < seen; i++)
+        if (sl[i] != (int32_t)i)
+            ok = 0;
+    CHECK(ok, "the slices still count 0..15 in order");
+    brk_play(0);
+}
+
 static void test_tempo_accuracy(void)
 {
     /* 64 bars at 174 BPM: the 1024th step starts within 1 sample of where it should */
@@ -1870,6 +1901,7 @@ int main(int argc, char **argv)
     if (argc > 1)
         outdir = argv[1];
     test_straight();
+    test_in_order();
     test_tempo_accuracy();
     test_free_play();
     test_quantised_key();

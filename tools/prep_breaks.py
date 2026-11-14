@@ -131,12 +131,12 @@ def onsets(x, rate):
     return env, hop
 
 
-def slice_points(x, rate, nslices, transients):
+def slice_points(x, rate, nslices, transients, steps=32):
     n = len(x)
     pts = [n * i // nslices for i in range(nslices + 1)]
     if transients:
         env, hop = onsets(x, rate)
-        reach = n // nslices // 3            # a marker moves at most a third of a slice
+        reach = n // steps // 3              # at most a third of a 16th: onto its own hit, not the 16th next door
         for i in range(1, nslices):
             lo, hi = max(0, (pts[i] - reach) // hop), min(len(env) - 1, (pts[i] + reach) // hop)
             if hi > lo:
@@ -274,7 +274,7 @@ def prepare(spec, args, shown=None):
         raise SystemExit(f"{shown or path}: {bars} bar(s) at {bpm:.2f} BPM are {len(x)} samples, the firmware's buffer "
                          f"holds {BANK_MAX_LEN} (fewer bars)")
     nslices = min(BANK_SLICES, args.break_slices or args.slices * bars)
-    pts = slice_points(x, args.rate, nslices, args.transients)
+    pts = slice_points(x, args.rate, nslices, args.transients, 16 * bars)
     data = adpcm_encode(x)
     name = (given or (args.name_prefix + path.stem)).upper()[:11]
     return {"name": name, "file": shown or str(path), "bpm": round(bpm, 2), "bars": bars, "rate": args.rate,

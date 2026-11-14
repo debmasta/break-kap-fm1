@@ -142,13 +142,19 @@ static uint32_t loop_steps(const brk_break_t *b)
     return n < 1u ? 1u : n > BRK_MAX_STEPS ? BRK_MAX_STEPS : n;
 }
 
+/* slice s's effect word (off, level 100 past the keys) */
+static uint32_t slx_of(int32_t s)
+{
+    return (s >= 0 && (uint32_t)s < BRK_KEYS) ? p_slx[s] : 0x64000000u;
+}
+
 /* a voice's slice effect, from the slice's settings as it starts */
 static void voice_fx(voice_t *n, const brk_break_t *b, int32_t s)
 {
     slxword_t u;
     float a, t;
     (void)b;
-    u.w = (s >= 0 && (uint32_t)s < BRK_KEYS) ? p_slx[s] : 0x64000000u;   /* (off, level 100) */
+    u.w = slx_of(s);
     a = (float)(u.f.amount > 100u ? 100u : u.f.amount) * 0.01f;
     t = (float)(u.f.tone > 100u ? 100u : u.f.tone) * 0.01f;
     n->fxt = u.f.type < BRK_SLX ? u.f.type : SLX_OFF;
@@ -259,9 +265,28 @@ static void voice_start(const brk_break_t *b, int32_t s, int rev, float at, floa
 
 static void trigger(const brk_break_t *b, int32_t s, int rev)
 {
+    voice_t *c = &v[cur];
     if (!b || s < 0 || (uint32_t)s >= b->nslices)
         return;
-    voice_start(b, s, rev, -1.0f, 1.0f);
+    /* the sound playing is already where slice s begins (the slices in order): it runs on, so 1..16 is the record as
+     * it is, its timing and all (PRD A-10). The markers sit on the hits, up to 2/3 of a 16th off the grid: a jump
+     * there would skip a bit or play a hit twice */
+    if (c->active && !rev && c->dir > 0.0f && c->wrap && !c->loop && c->amp_to > 0.0f && c->slice >= 0 &&
+        c->slice != s && slx_of(s) == slx_of(c->slice)) {
+        float d = c->pos - (float)b->slice[s], n = (float)b->len;
+        if (d > 0.5f * n)
+            d -= n;
+        else if (d < -0.5f * n)
+            d += n;
+        if (d * d < 0.49f * (n * n) / (float)(b->bars * b->bars * BRK_STEPS_PER_BAR * BRK_STEPS_PER_BAR)) {
+            c->slice = s;
+            last_slice = s;
+            c->gate_left = -1.0f;
+            c = 0;
+        }
+    }
+    if (c)
+        voice_start(b, s, rev, -1.0f, 1.0f);
     if (p_gate < 0.999f)                 /* the gate: this much of the slice, then a short fade */
         v[cur].gate_left = p_gate * (float)(b->slice[s + 1] - b->slice[s]);
 }
