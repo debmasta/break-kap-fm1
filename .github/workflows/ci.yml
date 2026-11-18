@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write                        # (BREAK KAP FM-1: the build is published as the release "dev", for install-mac.sh)
 
 concurrency:
   group: ci
@@ -87,3 +87,12 @@ jobs:
           name: break-kap-fm1
           path: app/build/*.fwsc
           if-no-files-found: error
+
+      - name: Published as the release "dev" (install-mac.sh takes it from there)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/*.fwsc break-kap-fm1.fwsc
+          gh release delete dev -y --cleanup-tag 2>/dev/null || true
+          gh release create dev break-kap-fm1.fwsc --prerelease --target "$GITHUB_SHA" --title "BREAK KAP FM-1 (dev)" \
+            --notes "Built from $GITHUB_SHA. Install on a Mac: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install-mac.sh | bash"
