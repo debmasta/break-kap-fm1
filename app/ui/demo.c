@@ -21,8 +21,6 @@ static struct {
     uint32_t t0, drawn, rng, bar, shot, shot_bar;
     float beat, last, kick, mprev, squat;
 } demo;
-/* the screen reader's text and the break manager's SysEx land here while the demo is off (main.c: sp_buf, app_sysex) */
-static struct { float sx[48], sy[48], sz[48]; } demo_sky PLAT_POOL;
 
 /* ------------------------------------------------------------------------------------------------- maths --- */
 typedef struct { float x, y, z; } mq_v3;
@@ -168,11 +166,11 @@ static void mq_s_disc(mq_v3 a, float r, uint16_t c)       /* a ball: an octagon 
 /* ------------------------------------------------------------------------------------------------- the fly --- */
 typedef struct { mq_v3 p; float t; } mq_foot_t;
 typedef struct { mq_v3 pos; float yaw, roll, body_y, pitch, broll, flap, sweep; mq_foot_t feet[6]; } mq_fly_t;
-static mq_fly_t mq_fly, mq_ghost;
+static mq_fly_t mq_fly;
 static float MQ_E[11];                      /* the black keys' effects, eased (bit PAD_*) */
 static float mq_rnds[12];
 static uint32_t mq_foot_n;
-static struct { mq_v3 p; float yaw, roll, body_y; } mq_hist[24];
+typedef struct { mq_v3 p; float yaw, roll, body_y; } mq_trail_t;
 static uint32_t mq_hist_n;
 static const float MQ_REST[6][2] = {{.2f, .3f}, {.3f, -.16f}, {.15f, -.3f}, {-.2f, .3f}, {-.3f, -.16f}, {-.15f, -.3f}};
 static const float MQ_HIP[6][2] = {{.03f, .02f}, {.035f, 0.0f}, {.03f, -.02f}, {-.03f, .02f}, {-.035f, 0.0f}, {-.03f, -.02f}};
@@ -260,8 +258,15 @@ static void mq_fly_draw(const mq_fly_t *F, uint16_t col, uint16_t wingc, int wir
 /* ------------------------------------------------------------------------------------------------- the floor --- */
 #define MQ_NC 7
 #define MQ_CS .17f
-static float mq_fl_h[MQ_NC * MQ_NC], mq_fl_v[MQ_NC * MQ_NC];
-static uint8_t mq_fl_order[MQ_NC * MQ_NC];
+/* the demo's own memory in the pool: the screen reader's text and the break manager's SysEx use it while the demo is
+ * off (main.c: sp_buf, app_sysex), the fly's trail and the floor while it is on (RAM is short) */
+static union {
+    struct { float sx[48], sy[48], sz[48]; } stars;
+    struct { mq_trail_t hist[16]; float fl_h[MQ_NC * MQ_NC], fl_v[MQ_NC * MQ_NC]; } s;
+} demo_sky PLAT_POOL;
+#define mq_hist (demo_sky.s.hist)
+#define mq_fl_h (demo_sky.s.fl_h)
+#define mq_fl_v (demo_sky.s.fl_v)
 
 static void mq_floor_tick(float dt, float t, int32_t gate_ph)
 {
@@ -277,21 +282,6 @@ static void mq_floor_tick(float dt, float t, int32_t gate_ph)
         mq_fl_h[i] += mq_fl_v[i] * dt;
     }
 }
-static void mq_floor_sort(void)             /* far to near from the camera (once a frame) */
-{
-    uint32_t i, j;
-    float d[MQ_NC * MQ_NC];
-    for (i = 0; i < MQ_NC * MQ_NC; i++) {
-        mq_v3 c = mq_vsub(mq_v(((float)(i % MQ_NC) - 3.0f) * MQ_CS, 0.0f, ((float)(i / MQ_NC) - 3.0f) * MQ_CS), mq_cam_e);
-        d[i] = mq_vdot(c, c);
-        mq_fl_order[i] = (uint8_t)i;
-        for (j = i; j > 0u && d[mq_fl_order[j - 1u]] < d[mq_fl_order[j]]; j--) {
-            uint8_t tmp = mq_fl_order[j];
-            mq_fl_order[j] = mq_fl_order[j - 1u];
-            mq_fl_order[j - 1u] = tmp;
-        }
-    }
-}
 static uint16_t mq_shade(uint32_t r, uint32_t g, uint32_t b, float k)
 {
     k = k < 0.0f ? 0.0f : k > 1.0f ? 1.0f : k;
@@ -299,11 +289,23 @@ static uint16_t mq_shade(uint32_t r, uint32_t g, uint32_t b, float k)
 }
 static void mq_floor_draw(void)
 {
-    uint32_t n;
+    uint8_t order[MQ_NC * MQ_NC];
+    float d[MQ_NC * MQ_NC];
+    uint32_t n, j;
     float g = MQ_CS * .44f;
     int ice = MQ_E[PAD_FREEZE] > .5f;
+    for (n = 0; n < MQ_NC * MQ_NC; n++) {   /* far to near from the camera */
+        mq_v3 c = mq_vsub(mq_v(((float)(n % MQ_NC) - 3.0f) * MQ_CS, 0.0f, ((float)(n / MQ_NC) - 3.0f) * MQ_CS), mq_cam_e);
+        d[n] = mq_vdot(c, c);
+        order[n] = (uint8_t)n;
+        for (j = n; j > 0u && d[order[j - 1u]] < d[order[j]]; j--) {
+            uint8_t tmp = order[j];
+            order[j] = order[j - 1u];
+            order[j - 1u] = tmp;
+        }
+    }
     for (n = 0; n < MQ_NC * MQ_NC; n++) {
-        uint32_t i = mq_fl_order[n];
+        uint32_t i = order[n];
         float x = ((float)(i % MQ_NC) - 3.0f) * MQ_CS, z = ((float)(i / MQ_NC) - 3.0f) * MQ_CS, h = mq_fl_h[i] + .015f;
         float k = mq_mn(1.0f, mq_mx(.08f, 1.1f - mq_sq(x * x + z * z) * 1.4f)) * (.35f + 5.0f * mq_mx(0.0f, mq_fl_h[i]));
         uint16_t top = ice ? mq_shade(120, 190, 230, k) : mq_shade(245, 184, 46, k * .55f),
@@ -388,10 +390,10 @@ static void demo_frame(uint32_t now)
         demo.squat = mq_mx(0.0f, demo.squat - dt * 5.0f);
         mq_fly_pose(t, dt, gate_ph);
         mq_floor_tick(dt, t, gate_ph);
-        mq_hist[mq_hist_n % 24u].p = mq_fly.pos;
-        mq_hist[mq_hist_n % 24u].yaw = mq_fly.yaw;
-        mq_hist[mq_hist_n % 24u].roll = mq_fly.roll;
-        mq_hist[mq_hist_n % 24u].body_y = mq_fly.body_y;
+        mq_hist[mq_hist_n % 16u].p = mq_fly.pos;
+        mq_hist[mq_hist_n % 16u].yaw = mq_fly.yaw;
+        mq_hist[mq_hist_n % 16u].roll = mq_fly.roll;
+        mq_hist[mq_hist_n % 16u].body_y = mq_fly.body_y;
         mq_hist_n++;
     }
     /* the camera: a slow turn, another angle every two bars */
@@ -411,7 +413,6 @@ static void demo_frame(uint32_t now)
                   mq_cam_r.x * mq_cam_f.y - mq_cam_r.y * mq_cam_f.x);
         mq_cam_F = 240.0f * s[3] * (1.0f + .1f * demo.kick);
     }
-    mq_floor_sort();
     /* white like the logo; FREEZE ice blue; FILTER the hues going round */
     if (MQ_E[PAD_FILTER] > .3f) {
         float h = t * .5f;
@@ -423,10 +424,10 @@ static void demo_frame(uint32_t now)
     for (mq_sy0 = 0; mq_sy0 < 240; mq_sy0 += 60) {   /* the whole screen, in four strips */
         cv_begin(240, 60, C_BLACK);
         mq_floor_draw();
-        if (MQ_E[PAD_DUB] > .05f && mq_hist_n > 22u)   /* DUB: three ghosts trailing behind, green wire */
+        if (MQ_E[PAD_DUB] > .05f && mq_hist_n > 16u)   /* DUB: three ghosts trailing behind, green wire */
             for (i = 3u; i-- > 0u;) {
-                uint32_t h = (mq_hist_n - 1u - (i + 1u) * 7u) % 24u;
-                mq_ghost = mq_fly;
+                uint32_t h = (mq_hist_n - 1u - (i + 1u) * 5u) % 16u;
+                mq_fly_t mq_ghost = mq_fly;
                 mq_ghost.pos = mq_vadd(mq_hist[h].p, mq_v((float)(i + 1u) * .07f, 0.0f, -(float)(i + 1u) * .2f));
                 mq_ghost.yaw = mq_hist[h].yaw;
                 mq_ghost.roll = mq_hist[h].roll;
