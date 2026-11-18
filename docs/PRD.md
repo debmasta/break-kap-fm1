@@ -533,4 +533,4 @@ user presets (the kick is saved with the settings), and the overload guard (E-7,
 - The black keys' pictures (B-*: what a held pad shows in the middle strip) are MOUSTIQUE doing that effect (no floor),
   the pad's name over it; CHOPPAH's own pictures are gone (flash).
 - PANTIN, a second character: flat yellow, floppy, its head a screen showing the break's waveform; HOME held in SCÈNE
-  switches MOUSTIQUE -> PANTIN -> off; the saver and the pads' pictures show the one picked.
+  switches MOUSTIQUE -> PANTIN -> off; the saver shows the one picked, the pads' pictures always MOUSTIQUE.
