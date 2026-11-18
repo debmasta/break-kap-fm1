@@ -308,7 +308,7 @@ static void input(void)
         }
     }
     {                                    /* SCÈNE (BREAK KAP FM-1): HOME held 0.7 s alone shows MOUSTIQUE on the whole
-                                          * screen, everything else still playing; again, back */
+                                          * screen, everything else still playing; again, PANTIN; again, back */
         static uint32_t home_t0;
         static uint8_t home_long;
         if (bdn & 1u << B_HOME) {
@@ -319,7 +319,7 @@ static void input(void)
         if (btn & 1u << B_HOME && !home_long && now - home_t0 > 700u) {
             home_long = 1u;
             ui.home_combo = 1u;          /* (the let-go doesn't turn PERFORM / GENERATOR) */
-            scene_toggle(now);
+            scene_next(now);
         }
     }
     if (ui.home_hold && !(btn & 1u << B_HOME)) {

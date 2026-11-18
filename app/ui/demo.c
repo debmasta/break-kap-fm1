@@ -21,6 +21,8 @@ static struct {
     uint32_t t0, drawn, rng, bar, shot, shot_bar;
     float beat, last, kick, mprev, squat;
 } demo;
+static uint8_t mq_kind;                  /* the character: 0 MOUSTIQUE, 1 PANTIN */
+static uint16_t mq_col, mq_wingc;        /* its colours this frame */
 
 /* ------------------------------------------------------------------------------------------------- maths --- */
 typedef struct { float x, y, z; } mq_v3;
@@ -343,6 +345,17 @@ static void demo_start(uint32_t now)
 /* SCÈNE: MOUSTIQUE on the whole screen while everything still plays (HOME held: main.c); the demo's drawing, without
  * the demo (no key ends it) */
 static uint8_t mq_scene;
+static void scene_toggle(uint32_t now);
+static void scene_next(uint32_t now)     /* HOME held: SCÈNE with MOUSTIQUE, then PANTIN, then back */
+{
+    if (mq_scene && !mq_kind) {
+        mq_kind = 1u;
+        return;
+    }
+    if (mq_scene)
+        mq_kind = 0u;
+    scene_toggle(now);
+}
 static void scene_toggle(uint32_t now)
 {
     if (mq_scene) {
@@ -363,7 +376,108 @@ static void demo_end(void)
     ui.redraw = RG_ALL;
 }
 
-static uint16_t mq_col, mq_wingc;
+
+/* ------------------------------------------------------------------------------------------------- PANTIN --- */
+/* the puppet: flat yellow, floppy (each joint a spring going after its target), its head a screen showing the break's
+ * waveform with two eyes; it dances on the beat, throws an arm on each slice, squats on the kick; FREEZE: hands up,
+ * round eyes; TAPE STOP: it collapses; REVERSE: a handstand; GATE: it marches; RANDOM: it flails; the ROLLs: it shakes */
+typedef struct { float v, s; } mq_spr_t; /* a spring: value, speed */
+static struct {
+    mq_spr_t a[2], fw[2], e[2], lean, hip, turn;   /* arms: raised (0 down .. 3.1 up), forward, the elbow; the body */
+    uint32_t punch;                      /* the arm thrown last */
+    float pt[2];                         /* each arm's throw, 1 .. 0 */
+} pp;
+static void mq_spring(mq_spr_t *p, float tg, float dt, float k)
+{
+    p->s += ((tg - p->v) * k - p->s * 2.0f * mq_sq(k) * .45f) * dt;
+    p->v += p->s * dt;
+}
+static void pp_tick(float t, float dt, int32_t gate_ph, int hit)
+{
+    float roll = mq_mx(MQ_E[PAD_ROLL8], mq_mx(MQ_E[PAD_ROLL16], MQ_E[PAD_ROLL32])), sw = mq_sn(demo.beat * 3.14159f);
+    uint32_t i;
+    if (hit) {                           /* a slice: the other arm thrown */
+        pp.punch ^= 1u;
+        pp.pt[pp.punch] = 1.0f;
+    }
+    for (i = 0; i < 2u; i++) {
+        float side = i ? 1.0f : -1.0f, a = .35f + .35f * sw * side + 1.6f * pp.pt[i], fw = .2f + .9f * pp.pt[i], e = .9f - .7f * pp.pt[i];
+        pp.pt[i] = mq_mx(0.0f, pp.pt[i] - dt * 5.0f);
+        if (MQ_E[PAD_FREEZE] > .5f || MQ_E[PAD_REVERSE] > .5f)
+            a = 2.9f, fw = 0.0f, e = .1f;   /* hands up (and on its hands, upside down) */
+        if (MQ_E[PAD_TAPESTOP] > .5f)
+            a = .05f, fw = .3f, e = .1f;    /* arms hanging */
+        if (MQ_E[PAD_RANDOM] > .3f)
+            a = mq_rnds[i * 3u] * 3.0f, fw = mq_rnds[i * 3u + 1u] * 1.5f - .4f, e = mq_rnds[i * 3u + 2u] * 2.0f;
+        a += roll * .25f * mq_sn(t * 70.0f + (float)i);
+        mq_spring(&pp.a[i], a, dt, 140.0f);
+        mq_spring(&pp.fw[i], fw, dt, 140.0f);
+        mq_spring(&pp.e[i], e, dt, 160.0f);
+    }
+    mq_spring(&pp.hip, .26f - .06f * demo.squat - .17f * MQ_E[PAD_TAPESTOP] + .015f * mq_sn(demo.beat * 6.2832f), dt, 220.0f);
+    mq_spring(&pp.lean, .12f * sw + .5f * MQ_E[PAD_TAPESTOP] + roll * .08f * mq_sn(t * 60.0f) +
+                        (MQ_E[PAD_RANDOM] > .3f ? mq_rnds[7] - .5f : 0.0f), dt, 120.0f);
+    mq_spring(&pp.turn, .35f * mq_sn(t * .5f) + (float)gate_ph * .2f * MQ_E[PAD_GATE], dt, 60.0f);
+}
+/* the puppet's shapes into the strip, at pos; one: a single colour (a ghost, an echo) */
+static void pp_draw(mq_v3 pos, uint16_t one, int ghost)
+{
+    mq_rot_t R = mq_rot(pp.turn.v, 0.0f, MQ_E[PAD_REVERSE] * 3.14159f), L = mq_rot(0.0f, 0.0f, pp.lean.v);
+    uint16_t body = ghost ? one : mq_col, dark = ghost ? one : RGB(18, 18, 22), ink = ghost ? one : RGB(245, 184, 46);
+    float rev = MQ_E[PAD_REVERSE] > .5f ? .62f : 0.0f, w = .036f;
+    mq_v3 hip = mq_v(0.0f, pp.hip.v, 0.0f), neck = mq_vadd(hip, mq_turn(&L, mq_v(0.0f, .17f, 0.0f)));
+    uint32_t i;
+    int32_t k;
+#define PW(p) mq_vadd(mq_vadd(pos, mq_v(0.0f, rev, 0.0f)), mq_turn(&R, (p)))   /* (REVERSE: turned, then lifted) */
+    if (MQ_E[PAD_FILTER] <= .3f && !ghost && MQ_E[PAD_FREEZE] <= .5f)
+        body = ink;
+    for (i = 0; i < 2u; i++) {           /* the legs: hip, knee forward, foot on the floor (GATE: marching) */
+        float side = i ? 1.0f : -1.0f, lift = MQ_E[PAD_GATE] * (float)((uint32_t)(demo.beat * 2.0f + (float)i) & 1u) * .08f;
+        mq_v3 h = mq_vadd(hip, mq_v(side * .045f, 0.0f, 0.0f)), f = mq_v(side * (.07f + .05f * MQ_E[PAD_TAPESTOP]), lift, .02f), m, kn;
+        float dx = f.x - h.x, dy = f.y - h.y, d = mq_sq(dx * dx + dy * dy), up;
+        m = mq_vlerp(h, f, .5f);
+        up = d < .24f ? mq_sq(.0144f - d * d * .25f) : 0.0f;
+        kn = mq_vadd(m, mq_v(0.0f, 0.0f, up * 1.6f));
+        mq_s_seg2(PW(h), PW(kn), w, w, body);
+        mq_s_seg2(PW(kn), PW(f), w, w * .9f, body);
+        mq_s_seg2(PW(f), PW(mq_vadd(f, mq_v(0.0f, 0.0f, .05f))), w * 1.2f, w * 1.2f, dark);
+    }
+    mq_s_seg2(PW(hip), PW(neck), .09f, .1f, body);   /* the body */
+    for (i = 0; i < 2u; i++) {           /* the arms: shoulder, elbow, the hand a white ball */
+        float side = i ? 1.0f : -1.0f, a = pp.a[i].v, fw = pp.fw[i].v, e = pp.e[i].v;
+        mq_v3 sh = mq_vadd(neck, mq_v(side * .06f, -.015f, 0.0f));
+        mq_v3 u = mq_vnorm(mq_v(side * mq_sn(a), -mq_cs(a), fw)), el = mq_vadd(sh, mq_vmul(u, .1f));
+        mq_v3 u2 = mq_vnorm(mq_vadd(u, mq_v(0.0f, e * .8f, e * .5f))), hd = mq_vadd(el, mq_vmul(u2, .1f));
+        mq_s_seg2(PW(sh), PW(el), w, w, body);
+        mq_s_seg2(PW(el), PW(hd), w, w * .9f, body);
+        mq_s_disc(PW(hd), .025f, ghost ? one : RGB(244, 244, 240));
+    }
+    {                                    /* the head: a screen, the break's waveform on it, two eyes */
+        mq_v3 c = mq_vadd(neck, mq_turn(&L, mq_v(0.0f, .075f, 0.0f))), q[4];
+        float hw = .075f, hh = .055f;
+        q[0] = PW(mq_vadd(c, mq_v(-hw - .012f, -hh - .012f, .01f))); q[1] = PW(mq_vadd(c, mq_v(hw + .012f, -hh - .012f, .01f)));
+        q[2] = PW(mq_vadd(c, mq_v(hw + .012f, hh + .012f, .01f)));   q[3] = PW(mq_vadd(c, mq_v(-hw - .012f, hh + .012f, .01f)));
+        mq_s_poly(q, 4u, body);
+        q[0] = PW(mq_vadd(c, mq_v(-hw, -hh, .02f))); q[1] = PW(mq_vadd(c, mq_v(hw, -hh, .02f)));
+        q[2] = PW(mq_vadd(c, mq_v(hw, hh, .02f)));   q[3] = PW(mq_vadd(c, mq_v(-hw, hh, .02f)));
+        mq_s_poly(q, 4u, dark);
+        if (!ghost) {
+            float big = MQ_E[PAD_FREEZE] > .5f ? 1.7f : 1.0f, sq2 = MQ_E[PAD_TAPESTOP] > .5f ? .3f : 1.0f;
+            for (k = 0; k < 12; k++) {   /* the waveform, across the screen's lower half */
+                float x = -hw + .008f + (float)k * (2.0f * hw - .016f) / 11.0f, hgt = (float)wave_px[(uint32_t)k * 20u] * .0011f + .003f;
+                mq_s_seg2(PW(mq_vadd(c, mq_v(x, -.025f - hgt, .025f))), PW(mq_vadd(c, mq_v(x, -.025f + hgt, .025f))), .006f,
+                          .006f, ink);
+            }
+            for (k = -1; k <= 1; k += 2) {   /* the eyes */
+                mq_v3 ey = mq_vadd(c, mq_v((float)k * .03f, .018f, .026f));
+                mq_s_disc(PW(ey), .014f * big * sq2 + .002f, RGB(244, 244, 240));
+                mq_s_disc(PW(mq_vadd(ey, mq_v(.004f * mq_sn(demo.beat * 3.14159f), 0.0f, .002f))), .006f * big * sq2 + .001f, dark);
+            }
+        }
+    }
+#undef PW
+}
+
 static float mq_gate = 1.0f, mq_tape = 1.0f, mq_flash, mq_t; /* the engine's gate level and tape speed; a roll's hit */
 static uint32_t mq_rolln, mq_seed;       /* the roll's repeats seen; the glitch's dice (a new one each step) */
 
@@ -378,7 +492,7 @@ static void mq_tick(uint32_t now, int full)
     float t, dt, m, a;
     uint32_t k;
     int32_t gate_ph;
-    int frozen;
+    int frozen, hit;
     brk_status(&st);
     t = (float)((now - demo.t0) % 1000000u) * .001f;
     dt = demo.last > 0.0f && t > demo.last ? mq_mn(.08f, t - demo.last) : .04f;
@@ -397,7 +511,8 @@ static void mq_tick(uint32_t now, int full)
         demo.kick = 1.0f, demo.squat = frozen ? demo.squat : 1.0f;
     demo.mprev = m;
     demo.kick *= .82f;
-    if (st.playing && st.slice >= 0 && (st.slice != demo.slice || st.step != demo.step) && !frozen) {
+    hit = st.playing && st.slice >= 0 && (st.slice != demo.slice || st.step != demo.step) && !frozen;
+    if (hit) {
         mq_fly.feet[mq_foot_n % 6u].t = 0.0f;  /* a slice: a foot steps */
         mq_foot_n++;
     }
@@ -428,6 +543,8 @@ static void mq_tick(uint32_t now, int full)
             mq_hist_n++;
         }
     }
+    if (mq_kind)                         /* (PANTIN even frozen: FREEZE puts its hands up) */
+        pp_tick(t, frozen ? dt * .5f : dt, gate_ph, hit);
     /* the camera: a slow turn; full, another angle every two bars */
     if (full && st.playing && st.bar / 2u != demo.shot_bar) {
         demo.shot_bar = st.bar / 2u;
@@ -439,7 +556,7 @@ static void mq_tick(uint32_t now, int full)
         const float *s = SH[demo.shot];
         a = s[0] + (full ? .18f * mq_sn(t * .21f) : .5f * mq_sn(t * .35f));
         mq_cam_e = mq_v(mq_sn(a) * s[2], s[1] - (full ? 0.0f : .2f), mq_cs(a) * s[2]);
-        mq_cam_f = mq_vnorm(mq_vsub(mq_v(0.0f, .16f, -.04f), mq_cam_e));
+        mq_cam_f = mq_vnorm(mq_vsub(mq_v(0.0f, mq_kind ? .3f : .16f, -.04f), mq_cam_e));
         mq_cam_r = mq_vnorm(mq_v(-mq_cam_f.z, 0.0f, mq_cam_f.x));
         mq_cam_u = mq_v(mq_cam_r.y * mq_cam_f.z - mq_cam_r.z * mq_cam_f.y, mq_cam_r.z * mq_cam_f.x - mq_cam_r.x * mq_cam_f.z,
                   mq_cam_r.x * mq_cam_f.y - mq_cam_r.y * mq_cam_f.x);
@@ -465,6 +582,16 @@ static void mq_band(int full)
     uint32_t i;
     if (full)
         mq_floor_draw();
+    if (mq_kind) {                       /* PANTIN: its echoes (ROLL), its ghosts (DUB), itself */
+        float r = mq_mx(MQ_E[PAD_ROLL8], mq_mx(MQ_E[PAD_ROLL16], MQ_E[PAD_ROLL32]));
+        for (i = 3u; MQ_E[PAD_DUB] > .05f && i-- > 0u;)
+            pp_draw(mq_v((float)(i + 1u) * .1f, 0.0f, -(float)(i + 1u) * .22f), mq_shade(120, 230, 160, (.6f - (float)i * .15f) * mq_mn(1.0f, MQ_E[PAD_DUB] * 2.0f)), 1);
+        if (r > .2f) {
+            pp_draw(mq_v(-.18f * r, 0.0f, -.05f), mq_shade(200, 200, 196, .5f), 1);
+            pp_draw(mq_v(.18f * r, 0.0f, -.05f), mq_shade(200, 200, 196, .5f), 1);
+        }
+        pp_draw(mq_v(0.0f, 0.0f, 0.0f), 0u, 0);
+    } else {
     if (MQ_E[PAD_DUB] > .05f && (!full || mq_hist_n > 16u))   /* DUB: three ghosts trailing behind, green wire */
         for (i = 3u; i-- > 0u;) {
             mq_fly_t mq_ghost = mq_fly;
@@ -493,6 +620,7 @@ static void mq_band(int full)
             }
     }
     mq_fly_draw(&mq_fly, mq_col, mq_wingc, 0);
+    }
     if (MQ_E[PAD_DUB] > .05f) {          /* DUB: rings going out from it on the beat, green */
         float cx, cy, cz, ph = demo.beat - (float)(int32_t)demo.beat;
         if (mq_proj(mq_vadd(mq_fly.pos, mq_v(0.0f, mq_fly.body_y * MQ_S_FLY, 0.0f)), &cx, &cy, &cz))
