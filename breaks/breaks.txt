@@ -17,7 +17,7 @@
 *   classics/james_brown_cold_sweat.wav         114     2     4   COLD SWEAT
 *   classics/bobby_byrd_hot_pants.wav           114.78  2     4   HOT PANTS
 *   classics/incredible_bongo_band_apache.wav   114.78  2     4   APACHE
-*   classics/lightnin_rod_sport.wav             120.69  2     4   SPORT
+-   classics/lightnin_rod_sport.wav             120.69  2     4   SPORT
 -   classics/rotary_connection_life_could.wav   99.81   2     4   LIFE COULD
 -   classics/skull_snaps_its_a_new_day.wav      94.81   2     4   NEW DAY
 #
