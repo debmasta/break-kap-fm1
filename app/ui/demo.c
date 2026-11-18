@@ -364,6 +364,8 @@ static void demo_end(void)
 }
 
 static uint16_t mq_col, mq_wingc;
+static float mq_gate = 1.0f, mq_tape = 1.0f, mq_flash, mq_t; /* the engine's gate level and tape speed; a roll's hit */
+static uint32_t mq_rolln, mq_seed;       /* the roll's repeats seen; the glitch's dice (a new one each step) */
 
 /* the fly's step: the engine read, the effects eased, the pose; full: the demo or SCÈNE (the floor, the trail, the
  * camera's cuts), else a pad's picture (the fly alone, a slow turn) */
@@ -405,6 +407,15 @@ static void mq_tick(uint32_t now, int full)
             mq_rnds[k] = brk_randf(&demo.rng);
     }
     demo.slice = st.playing ? st.slice : -1;
+    mq_t = t;
+    mq_gate = st.gate;
+    mq_tape = st.tape;
+    if (st.roll_n != mq_rolln) {         /* a roll's repeat: a flash */
+        mq_rolln = st.roll_n;
+        mq_flash = st.roll_n ? 1.0f : 0.0f;
+    }
+    mq_flash *= .55f;
+    mq_seed = (uint32_t)st.step * 0x9E3779B9u ^ (uint32_t)(st.slice + 7) * 0x85EBCA6Bu;
     if (!frozen) {
         demo.squat = mq_mx(0.0f, demo.squat - dt * 5.0f);
         mq_fly_pose(t, dt, gate_ph);
@@ -433,6 +444,10 @@ static void mq_tick(uint32_t now, int full)
         mq_cam_u = mq_v(mq_cam_r.y * mq_cam_f.z - mq_cam_r.z * mq_cam_f.y, mq_cam_r.z * mq_cam_f.x - mq_cam_r.x * mq_cam_f.z,
                   mq_cam_r.x * mq_cam_f.y - mq_cam_r.y * mq_cam_f.x);
         mq_cam_F = 240.0f * s[3] * (1.0f + .1f * demo.kick);
+        if (MQ_E[PAD_REVERSE] > .5f) {   /* REVERSE: the world upside down (the fly on its back: right way up) */
+            mq_cam_u = mq_vmul(mq_cam_u, -1.0f);
+            mq_cam_r = mq_vmul(mq_cam_r, -1.0f);
+        }
     }
     /* white like the logo; FREEZE ice blue; FILTER the hues going round */
     if (MQ_E[PAD_FILTER] > .3f) {
@@ -464,7 +479,94 @@ static void mq_band(int full)
             mq_ghost.pos = mq_vadd(mq_ghost.pos, off);
             mq_fly_draw(&mq_ghost, mq_shade(150, 230, 170, (.6f - (float)i * .15f) * mq_mn(1.0f, MQ_E[PAD_DUB] * 2.0f)), 0u, 1);
         }
+    {                                    /* the ROLLs: stuttered copies either side, more the faster the roll */
+        float r = mq_mx(MQ_E[PAD_ROLL8], mq_mx(MQ_E[PAD_ROLL16], MQ_E[PAD_ROLL32]));
+        uint32_t n = MQ_E[PAD_ROLL32] > .5f ? 3u : MQ_E[PAD_ROLL16] > .5f ? 2u : 1u;
+        if (r > .2f)
+            for (i = n; i > 0u; i--) {
+                mq_fly_t e = mq_fly;
+                float k = (float)i * .16f * r;
+                e.pos = mq_vadd(mq_fly.pos, mq_v(-k, 0.0f, 0.0f));
+                mq_fly_draw(&e, mq_shade(200, 200, 196, .7f - (float)i * .18f), 0u, 1);
+                e.pos = mq_vadd(mq_fly.pos, mq_v(k, 0.0f, 0.0f));
+                mq_fly_draw(&e, mq_shade(200, 200, 196, .7f - (float)i * .18f), 0u, 1);
+            }
+    }
     mq_fly_draw(&mq_fly, mq_col, mq_wingc, 0);
+    if (MQ_E[PAD_DUB] > .05f) {          /* DUB: rings going out from it on the beat, green */
+        float cx, cy, cz, ph = demo.beat - (float)(int32_t)demo.beat;
+        if (mq_proj(mq_vadd(mq_fly.pos, mq_v(0.0f, mq_fly.body_y * MQ_S_FLY, 0.0f)), &cx, &cy, &cz))
+            for (i = 0; i < 2u; i++) {
+                float rr = (ph + (float)i * .5f - (float)(int32_t)(ph + (float)i * .5f)) * 120.0f + 8.0f;
+                uint16_t c = swap16(mq_shade(120, 230, 160, MQ_E[PAD_DUB] * (1.0f - rr / 128.0f)));
+                uint32_t a;
+                for (a = 0; a < 48u; a++) {
+                    int32_t x = (int32_t)(cx + rr * brk_sin_turns((float)a / 48.0f + .25f)),
+                            y = (int32_t)(cy + rr * .45f * brk_sin_turns((float)a / 48.0f));
+                    if (x >= 0 && x < 239 && y >= mq_sy0 && y < mq_sy0 + mq_bh)
+                        cv_px[(uint32_t)(y - mq_sy0) * 240u + (uint32_t)x] = cv_px[(uint32_t)(y - mq_sy0) * 240u + (uint32_t)x + 1u] = c;
+                }
+            }
+    }
+    if (MQ_E[PAD_FREEZE] > .5f)          /* FREEZE: frost, the same sparkles all the while */
+        for (i = 0; i < 70u; i++) {
+            uint32_t h = (i + 1u) * 0x9E3779B1u, x = (h >> 8) % 240u, y = (h >> 20) % 240u;
+            int32_t yy = mq_bh == 60 ? (int32_t)y : FX_Y + (int32_t)(y % 96u);
+            if (yy >= mq_sy0 && yy < mq_sy0 + mq_bh)
+                cv_px[(uint32_t)(yy - mq_sy0) * 240u + x] = swap16(h & 1u ? RGB(255, 255, 255) : RGB(150, 210, 255));
+        }
+}
+
+/* the effects on the picture itself, row by row, once the strip is drawn: RANDOM glitches (bands thrown sideways),
+ * TAPE STOP melts (the rows wobbling, the light going with the tape), GATE cuts the light with the gate, HALF SPEED and
+ * FILTER draw scanlines, a ROLL's hit flashes the picture negative */
+static void mq_rev(uint16_t *p, int32_t a, int32_t b)   /* p[a..b-1] back to front */
+{
+    for (b--; a < b; a++, b--) {
+        uint16_t t = p[a];
+        p[a] = p[b];
+        p[b] = t;
+    }
+}
+static void mq_post(void)
+{
+    int32_t r;
+    float k = 1.0f - MQ_E[PAD_GATE] * (1.0f - mq_gate);
+    k *= 1.0f - MQ_E[PAD_TAPESTOP] * .6f * (1.0f - mq_tape);
+    for (r = 0; r < mq_bh; r++) {
+        int32_t y = mq_sy0 + r, sh = 0, x;
+        uint16_t *px = &cv_px[(uint32_t)r * 240u];
+        float kr = k;
+        if (MQ_E[PAD_RANDOM] > .2f) {
+            uint32_t h = ((uint32_t)(y / 6) + 1u) * 0x27D4EB2Du ^ mq_seed;
+            h ^= h >> 15;
+            if ((h & 3u) == 0u)
+                sh = (int32_t)((h >> 8) % 61u) - 30;
+        }
+        if (MQ_E[PAD_TAPESTOP] > .1f)
+            sh += (int32_t)(MQ_E[PAD_TAPESTOP] * (1.0f - mq_tape) * 10.0f * brk_sin_turns((float)y * .02f + mq_t * .8f));
+        if ((MQ_E[PAD_HALF] > .5f || MQ_E[PAD_FILTER] > .5f) && (y & 1))
+            kr *= .45f;
+        if (sh) {                        /* (the row turned round by sh, in place: three reversals) */
+            sh = (sh + 240) % 240;
+            mq_rev(px, 0, 240);
+            mq_rev(px, 0, sh);
+            mq_rev(px, sh, 240);
+        }
+        if (kr < .97f || mq_flash > .35f)
+            for (x = 0; x < 240; x++) {
+                uint32_t c = swap16(px[x]), rr = c >> 11, g = (c >> 5) & 63u, b = c & 31u;
+                if (mq_flash > .35f) {
+                    rr = 31u - rr;
+                    g = 63u - g;
+                    b = 31u - b;
+                }
+                rr = (uint32_t)((float)rr * kr);
+                g = (uint32_t)((float)g * kr);
+                b = (uint32_t)((float)b * kr);
+                px[x] = swap16(rr << 11 | g << 5 | b);
+            }
+    }
 }
 
 static void demo_frame(uint32_t now)
@@ -478,6 +580,7 @@ static void demo_frame(uint32_t now)
     for (mq_sy0 = 0; mq_sy0 < 240; mq_sy0 += 60) {   /* the whole screen, in four strips */
         cv_begin(240, 60, C_BLACK);
         mq_band(1);
+        mq_post();
         cv_blit(0, (uint32_t)mq_sy0);
     }
 }
@@ -504,6 +607,7 @@ static void draw_fx(int pad, const brk_status_t *st, uint32_t now)
         cv_begin(240, FX_BAND, C_BLACK);
         mq_sy0 = FX_Y + top;
         mq_band(0);
+        mq_post();
         cv_oy = -top;
         cv_text(6, 0, &FONT_B, t, C_HI);
         cv_oy = 0;
