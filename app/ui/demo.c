@@ -262,11 +262,12 @@ static void mq_fly_draw(const mq_fly_t *F, uint16_t col, uint16_t wingc, int wir
  * off (main.c: sp_buf, app_sysex), the fly's trail and the floor while it is on (RAM is short) */
 static union {
     struct { float sx[48], sy[48], sz[48]; } stars;
-    struct { mq_trail_t hist[16]; float fl_h[MQ_NC * MQ_NC], fl_v[MQ_NC * MQ_NC]; } s;
+    struct { mq_trail_t hist[16]; float fl_h[MQ_NC * MQ_NC]; } s;   /* (580 B: the stars' 576, give or take; the pool's
+                                                                     * headroom wants 8 KB) */
 } demo_sky PLAT_POOL;
 #define mq_hist (demo_sky.s.hist)
 #define mq_fl_h (demo_sky.s.fl_h)
-#define mq_fl_v (demo_sky.s.fl_v)
+static float mq_fl_v[MQ_NC * MQ_NC];     /* (the floor's speeds: RAM) */
 
 static void mq_floor_tick(float dt, float t, int32_t gate_ph)
 {
