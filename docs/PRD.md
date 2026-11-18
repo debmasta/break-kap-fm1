@@ -530,3 +530,5 @@ user presets (the kick is saved with the settings), and the overload guard (E-7,
   black keys' effects move it. SPORT left the built-in bank to make room.
 - SCÈNE: HOME held 0.7 s alone shows MOUSTIQUE on the whole screen while everything still plays (keys, pads,
   transport, pages unseen); HOME held again, back. For a projector.
+- The black keys' pictures (B-*: what a held pad shows in the middle strip) are MOUSTIQUE doing that effect (no floor),
+  the pad's name over it; CHOPPAH's own pictures are gone (flash).

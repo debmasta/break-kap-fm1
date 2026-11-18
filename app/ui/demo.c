@@ -63,7 +63,8 @@ static mq_v3 mq_turn(const mq_rot_t *m, mq_v3 p)
 /* ------------------------------------------------------------------------------------------------- camera --- */
 static mq_v3 mq_cam_e, mq_cam_r, mq_cam_u, mq_cam_f;
 static float mq_cam_F;
-static int32_t mq_sy0;                      /* the strip being filled: rows sy0 .. sy0+59 */
+static int32_t mq_sy0, mq_bh = 60;          /* the strip being filled: screen rows sy0 .. sy0+bh-1 */
+static float mq_cy = 120.0f;             /* the screen row the camera looks at */
 
 static int mq_proj(mq_v3 p, float *x, float *y, float *z)
 {
@@ -72,7 +73,7 @@ static int mq_proj(mq_v3 p, float *x, float *y, float *z)
     if (zz < 0.05f)
         return 0;
     *x = 120.0f + mq_vdot(d, mq_cam_r) * mq_cam_F / zz;
-    *y = 120.0f - mq_vdot(d, mq_cam_u) * mq_cam_F / zz;
+    *y = mq_cy - mq_vdot(d, mq_cam_u) * mq_cam_F / zz;
     *z = zz;
     return 1;
 }
@@ -88,10 +89,10 @@ static void mq_fill(const float *px, const float *py, uint32_t n, uint16_t c)
         lo_y = mq_mn(lo_y, py[i]);
         hi_y = mq_mx(hi_y, py[i]);
     }
-    if (hi_y < (float)mq_sy0 || lo_y >= (float)(mq_sy0 + 60))
+    if (hi_y < (float)mq_sy0 || lo_y >= (float)(mq_sy0 + mq_bh))
         return;
     ya = lo_y < (float)mq_sy0 ? mq_sy0 : (int32_t)lo_y;
-    yb = hi_y > (float)(mq_sy0 + 59) ? mq_sy0 + 59 : (int32_t)hi_y;
+    yb = hi_y > (float)(mq_sy0 + mq_bh - 1) ? mq_sy0 + mq_bh - 1 : (int32_t)hi_y;
     for (y = ya; y <= yb; y++) {
         float fy = (float)y + 0.5f, lo = 1e9f, hi = -1e9f;
         for (i = 0; i < n; i++) {
@@ -362,23 +363,23 @@ static void demo_end(void)
     ui.redraw = RG_ALL;
 }
 
-static void demo_frame(uint32_t now)
+static uint16_t mq_col, mq_wingc;
+
+/* the fly's step: the engine read, the effects eased, the pose; full: the demo or SCÈNE (the floor, the trail, the
+ * camera's cuts), else a pad's picture (the fly alone, a slow turn) */
+static void mq_tick(uint32_t now, int full)
 {
     static const float SH[6][4] = {{0.0f, .45f, 1.9f, 1.24f}, {.7f, .3f, 1.6f, 1.12f}, {-.6f, .7f, 1.7f, 1.18f},
                                    {2.6f, .4f, 1.8f, 1.18f}, {0.0f, 2.0f, .35f, 1.07f}, {-1.4f, .18f, 1.35f, 1.07f}};
                                    /* (each angle: round, up, back, and the focal length over 240) */
     brk_status_t st;
     float t, dt, m, a;
-    uint32_t i, k;
+    uint32_t k;
     int32_t gate_ph;
-    uint16_t col, wingc;
     int frozen;
-    if (now - demo.drawn < DEMO_FRAME_MS)
-        return;
-    demo.drawn = now;
     brk_status(&st);
-    t = (float)(now - demo.t0) * .001f;
-    dt = demo.last > 0.0f ? mq_mn(.08f, t - demo.last) : .04f;
+    t = (float)((now - demo.t0) % 1000000u) * .001f;
+    dt = demo.last > 0.0f && t > demo.last ? mq_mn(.08f, t - demo.last) : .04f;
     demo.last = t;
     demo.beat = st.playing && st.bar16 >= 0 ? (float)(st.bar % 64u) * 4.0f + ((float)st.bar16 + st.phase) * .25f
                                            : t * brk_get_tempo() * (1.0f / 60.0f);
@@ -387,43 +388,46 @@ static void demo_frame(uint32_t now)
         float tg = (st.pads >> k) & 1u ? 1.0f : 0.0f;
         MQ_E[k] += (tg - MQ_E[k]) * mq_mn(1.0f, dt * (tg > MQ_E[k] ? 14.0f : 6.0f));
     }
+    dt *= 1.0f - .6f * MQ_E[PAD_HALF];   /* HALF SPEED: it moves in slow motion */
     frozen = MQ_E[PAD_FREEZE] > .5f;
     m = meter_brk;                       /* the kick: the break's level jumping (and the kick layer's) */
     if (m - demo.mprev > .12f || meter_kick > .3f)
         demo.kick = 1.0f, demo.squat = frozen ? demo.squat : 1.0f;
     demo.mprev = m;
     demo.kick *= .82f;
+    if (st.playing && st.slice >= 0 && (st.slice != demo.slice || st.step != demo.step) && !frozen) {
+        mq_fly.feet[mq_foot_n % 6u].t = 0.0f;  /* a slice: a foot steps */
+        mq_foot_n++;
+    }
     if (st.step != demo.step) {          /* a new step: fresh dice */
         demo.step = st.step;
         for (k = 0; k < 12u; k++)
             mq_rnds[k] = brk_randf(&demo.rng);
     }
-    if (st.playing && st.slice >= 0 && (st.slice != demo.slice || st.step != demo.step) && !frozen) {
-        mq_fly.feet[mq_foot_n % 6u].t = 0.0f;  /* a slice: a foot steps */
-        mq_foot_n++;
-    }
     demo.slice = st.playing ? st.slice : -1;
     if (!frozen) {
         demo.squat = mq_mx(0.0f, demo.squat - dt * 5.0f);
         mq_fly_pose(t, dt, gate_ph);
-        mq_floor_tick(dt, t, gate_ph);
-        mq_hist[mq_hist_n % 16u].p = mq_fly.pos;
-        mq_hist[mq_hist_n % 16u].yaw = mq_fly.yaw;
-        mq_hist[mq_hist_n % 16u].roll = mq_fly.roll;
-        mq_hist[mq_hist_n % 16u].body_y = mq_fly.body_y;
-        mq_hist_n++;
+        if (full) {
+            mq_floor_tick(dt, t, gate_ph);
+            mq_hist[mq_hist_n % 16u].p = mq_fly.pos;
+            mq_hist[mq_hist_n % 16u].yaw = mq_fly.yaw;
+            mq_hist[mq_hist_n % 16u].roll = mq_fly.roll;
+            mq_hist[mq_hist_n % 16u].body_y = mq_fly.body_y;
+            mq_hist_n++;
+        }
     }
-    /* the camera: a slow turn, another angle every two bars */
-    if (st.playing && st.bar / 2u != demo.shot_bar) {
+    /* the camera: a slow turn; full, another angle every two bars */
+    if (full && st.playing && st.bar / 2u != demo.shot_bar) {
         demo.shot_bar = st.bar / 2u;
         demo.shot = (demo.shot + 1u + (brk_rand(&demo.rng) & 1u)) % 6u;
     }
-    if (!st.playing)
+    if (!full || !st.playing)
         demo.shot = 0u;
     {
         const float *s = SH[demo.shot];
-        a = s[0] + .18f * mq_sn(t * .21f);
-        mq_cam_e = mq_v(mq_sn(a) * s[2], s[1], mq_cs(a) * s[2]);
+        a = s[0] + (full ? .18f * mq_sn(t * .21f) : .5f * mq_sn(t * .35f));
+        mq_cam_e = mq_v(mq_sn(a) * s[2], s[1] - (full ? 0.0f : .2f), mq_cs(a) * s[2]);
         mq_cam_f = mq_vnorm(mq_vsub(mq_v(0.0f, .16f, -.04f), mq_cam_e));
         mq_cam_r = mq_vnorm(mq_v(-mq_cam_f.z, 0.0f, mq_cam_f.x));
         mq_cam_u = mq_v(mq_cam_r.y * mq_cam_f.z - mq_cam_r.z * mq_cam_f.y, mq_cam_r.z * mq_cam_f.x - mq_cam_r.x * mq_cam_f.z,
@@ -433,26 +437,77 @@ static void demo_frame(uint32_t now)
     /* white like the logo; FREEZE ice blue; FILTER the hues going round */
     if (MQ_E[PAD_FILTER] > .3f) {
         float h = t * .5f;
-        col = RGB((uint32_t)(140.0f + 110.0f * brk_sin_turns(h)), (uint32_t)(140.0f + 110.0f * brk_sin_turns(h + .33f)),
-                  (uint32_t)(140.0f + 110.0f * brk_sin_turns(h + .67f)));
+        mq_col = RGB((uint32_t)(140.0f + 110.0f * brk_sin_turns(h)), (uint32_t)(140.0f + 110.0f * brk_sin_turns(h + .33f)),
+                     (uint32_t)(140.0f + 110.0f * brk_sin_turns(h + .67f)));
     } else
-        col = frozen ? RGB(190, 230, 255) : RGB(244, 244, 240);
-    wingc = frozen ? RGB(160, 196, 216) : MQ_E[PAD_FILTER] > .3f ? col : RGB(208, 208, 204);
-    for (mq_sy0 = 0; mq_sy0 < 240; mq_sy0 += 60) {   /* the whole screen, in four strips */
-        cv_begin(240, 60, C_BLACK);
+        mq_col = frozen ? RGB(190, 230, 255) : RGB(244, 244, 240);
+    mq_wingc = frozen ? RGB(160, 196, 216) : MQ_E[PAD_FILTER] > .3f ? mq_col : RGB(208, 208, 204);
+}
+
+/* the strip mq_sy0 .. +mq_bh: the floor (full), DUB's ghosts (full: its trail; else beside it), the fly */
+static void mq_band(int full)
+{
+    uint32_t i;
+    if (full)
         mq_floor_draw();
-        if (MQ_E[PAD_DUB] > .05f && mq_hist_n > 16u)   /* DUB: three ghosts trailing behind, green wire */
-            for (i = 3u; i-- > 0u;) {
+    if (MQ_E[PAD_DUB] > .05f && (!full || mq_hist_n > 16u))   /* DUB: three ghosts trailing behind, green wire */
+        for (i = 3u; i-- > 0u;) {
+            mq_fly_t mq_ghost = mq_fly;
+            mq_v3 off = mq_v((float)(i + 1u) * .07f, 0.0f, -(float)(i + 1u) * .2f);
+            if (full) {
                 uint32_t h = (mq_hist_n - 1u - (i + 1u) * 5u) % 16u;
-                mq_fly_t mq_ghost = mq_fly;
-                mq_ghost.pos = mq_vadd(mq_hist[h].p, mq_v((float)(i + 1u) * .07f, 0.0f, -(float)(i + 1u) * .2f));
+                mq_ghost.pos = mq_hist[h].p;
                 mq_ghost.yaw = mq_hist[h].yaw;
                 mq_ghost.roll = mq_hist[h].roll;
                 mq_ghost.body_y = mq_hist[h].body_y;
-                mq_fly_draw(&mq_ghost, mq_shade(150, 230, 170, (.6f - (float)i * .15f) * mq_mn(1.0f, MQ_E[PAD_DUB] * 2.0f)), 0u, 1);
             }
-        mq_fly_draw(&mq_fly, col, wingc, 0);
+            mq_ghost.pos = mq_vadd(mq_ghost.pos, off);
+            mq_fly_draw(&mq_ghost, mq_shade(150, 230, 170, (.6f - (float)i * .15f) * mq_mn(1.0f, MQ_E[PAD_DUB] * 2.0f)), 0u, 1);
+        }
+    mq_fly_draw(&mq_fly, mq_col, mq_wingc, 0);
+}
+
+static void demo_frame(uint32_t now)
+{
+    if (now - demo.drawn < DEMO_FRAME_MS)
+        return;
+    demo.drawn = now;
+    mq_tick(now, 1);
+    mq_cy = 120.0f;
+    mq_bh = 60;
+    for (mq_sy0 = 0; mq_sy0 < 240; mq_sy0 += 60) {   /* the whole screen, in four strips */
+        cv_begin(240, 60, C_BLACK);
+        mq_band(1);
         cv_blit(0, (uint32_t)mq_sy0);
+    }
+}
+
+/* a black key held: its picture is MOUSTIQUE doing the effect, in the strip where the slice blocks are (two bands of
+ * FX_BAND rows), the pad's name over it (main.c, about 30 times a second) */
+static void draw_fx(int pad, const brk_status_t *st, uint32_t now)
+{
+    const brk_padset_t *p = &set.pads;
+    char t[24];
+    int32_t top;
+    (void)st;
+    t[0] = 0;
+    text_cat(t, PAD_TITLE[pad]);
+    if (pad <= PAD_ROLL32) {
+        text_cat(t, " ");
+        text_cat(t, BRK_ROLL_DIV_NAME[p->roll_div[pad] % BRK_ROLL_DIVS]);
+    }
+    mq_tick(now, 0);
+    mq_cam_F *= .56f;                    /* (smaller: 96 rows) */
+    mq_cy = (float)(FX_Y + 54);
+    mq_bh = FX_BAND;
+    for (top = 0; top < 2 * FX_BAND; top += FX_BAND) {
+        cv_begin(240, FX_BAND, C_BLACK);
+        mq_sy0 = FX_Y + top;
+        mq_band(0);
+        cv_oy = -top;
+        cv_text(6, 0, &FONT_B, t, C_HI);
+        cv_oy = 0;
+        cv_blit(0, FX_Y + (uint32_t)top);
     }
 }
 
