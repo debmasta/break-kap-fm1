@@ -339,6 +339,22 @@ static void demo_start(uint32_t now)
     lcd_fill(0, 0, 240, 240, C_BLACK);
 }
 
+/* SCÈNE: MOUSTIQUE on the whole screen while everything still plays (HOME held: main.c); the demo's drawing, without
+ * the demo (no key ends it) */
+static uint8_t mq_scene;
+static void scene_toggle(uint32_t now)
+{
+    if (mq_scene) {
+        mq_scene = 0u;
+        lcd_fill(0, 0, 240, 240, C_BLACK);
+        ui.redraw = RG_ALL;
+        return;
+    }
+    demo_start(now);
+    demo.on = 0u;
+    mq_scene = 1u;
+}
+
 static void demo_end(void)
 {
     demo.on = 0u;

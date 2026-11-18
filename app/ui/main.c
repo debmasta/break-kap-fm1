@@ -307,6 +307,21 @@ static void input(void)
             page_say();
         }
     }
+    {                                    /* SCÈNE (BREAK KAP FM-1): HOME held 0.7 s alone shows MOUSTIQUE on the whole
+                                          * screen, everything else still playing; again, back */
+        static uint32_t home_t0;
+        static uint8_t home_long;
+        if (bdn & 1u << B_HOME) {
+            home_t0 = now;
+            home_long = 0u;
+        } else if (bdn)                  /* (another button meanwhile: a combination, not SCÈNE) */
+            home_long = 1u;
+        if (btn & 1u << B_HOME && !home_long && now - home_t0 > 700u) {
+            home_long = 1u;
+            ui.home_combo = 1u;          /* (the let-go doesn't turn PERFORM / GENERATOR) */
+            scene_toggle(now);
+        }
+    }
     if (ui.home_hold && !(btn & 1u << B_HOME)) {
         ui.home_hold = 0u;
         if (!ui.home_combo && (ui.page == PG_HOME || ui.page == PG_GEN)) {
@@ -1008,7 +1023,7 @@ void app_frame(void)
             demo_frame(now);
             return;
         }
-    } else if (!ui.intro && !ui.lobo_t &&
+    } else if (!ui.intro && !ui.lobo_t && !mq_scene &&
                (int32_t)(now - ui.idle_t) > (int32_t)(playing_now() ? DEMO_IDLE_PLAY_MS : DEMO_IDLE_MS)) {
         slices_let_go(ui.keys);
         ui.help = 0u;
@@ -1026,7 +1041,7 @@ void app_frame(void)
             return;
         }
     }
-    if ((ui.page == PG_TAP) != (ui.drawn_page == PG_TAP)) {   /* into or out of TAP: the whole screen again */
+    if ((ui.page == PG_TAP) != (ui.drawn_page == PG_TAP) && !mq_scene) {   /* into or out of TAP: the whole screen again */
         lcd_fill(0, 44, 240, 148, C_BLACK);
         ui.redraw = RG_ALL;
     }
@@ -1102,7 +1117,7 @@ void app_frame(void)
         else if (ui.pad_focus >= 0)
             want = ui.pad_focus;
         if (want != ui.shown) {
-            if ((want >= 0) != (ui.shown >= 0) || want < -1 || ui.shown < -1)
+            if (((want >= 0) != (ui.shown >= 0) || want < -1 || ui.shown < -1) && !mq_scene)
                 lcd_fill(0, 86, 240, 106, C_BLACK);
             ui.shown = want;
             ui.redraw |= RG_FOOT | (want != -1 ? RG_FX : RG_BLOCKS);
@@ -1137,6 +1152,11 @@ void app_frame(void)
     if (hdr != ui.last_hdr) {
         ui.last_hdr = hdr;
         ui.redraw |= RG_HEAD | (ui.page == PG_TAP ? RG_BLOCKS : 0);
+    }
+    if (mq_scene) {                      /* SCÈNE: MOUSTIQUE alone on the screen (the rest is drawn when it ends) */
+        demo_frame(now);
+        ui.redraw = 0u;
+        return;
     }
     if (ui.redraw & RG_HEAD)
         draw_head(&st, b, now);
@@ -1241,6 +1261,8 @@ int app_sysex(const uint8_t *p, uint32_t n)
     cmd = p[3];
     if (demo.on)
         demo_end();
+    if (mq_scene)                        /* (its trail and floor share the scratch) */
+        scene_toggle(0u);
     ui.idle_t = plat_ms();
     len = unpack7(p + 4, n - 4u > 600u ? 600u : n - 4u, u);
     if (cmd == 1u || cmd == 5u) {        /* INFO, READ: any time */

@@ -521,3 +521,12 @@ user presets (the kick is saved with the settings), and the overload guard (E-7,
 - M-VAVE FM1 Open (official SDK, V14): https://github.com/m-vave/fm1_open
 - FM-1 reverse engineering: https://github.com/AL-255/FM-1-RE
 - Awesome FM-1: https://github.com/cicloid/awesome-fm-1
+
+---
+
+## BREAK KAP FM-1 (this fork)
+
+- The demo (B-54) is MOUSTIQUE: the label's crane fly dancing on the break, in white wire over a floor of cubes; the
+  black keys' effects move it. SPORT left the built-in bank to make room.
+- SCÈNE: HOME held 0.7 s alone shows MOUSTIQUE on the whole screen while everything still plays (keys, pads,
+  transport, pages unseen); HOME held again, back. For a projector.
