@@ -346,14 +346,16 @@ static void demo_start(uint32_t now)
  * the demo (no key ends it) */
 static uint8_t mq_scene;
 static void scene_toggle(uint32_t now);
-static void scene_next(uint32_t now)     /* HOME held: SCÈNE with MOUSTIQUE, then PANTIN, then back */
+static uint8_t mq_switched;
+static void scene_next(uint32_t now)     /* HOME held: SCÈNE with the character picked; again, the other one; again,
+                                          * back, that one kept (the saver and the pads' pictures show it) */
 {
-    if (mq_scene && !mq_kind) {
-        mq_kind = 1u;
+    if (mq_scene && !mq_switched) {
+        mq_kind ^= 1u;
+        mq_switched = 1u;
         return;
     }
-    if (mq_scene)
-        mq_kind = 0u;
+    mq_switched = 0u;
     scene_toggle(now);
 }
 static void scene_toggle(uint32_t now)
@@ -720,7 +722,6 @@ static void draw_fx(int pad, const brk_status_t *st, uint32_t now)
     const brk_padset_t *p = &set.pads;
     char t[24];
     int32_t top;
-    uint8_t kind = mq_kind;
     (void)st;
     t[0] = 0;
     text_cat(t, PAD_TITLE[pad]);
@@ -728,7 +729,6 @@ static void draw_fx(int pad, const brk_status_t *st, uint32_t now)
         text_cat(t, " ");
         text_cat(t, BRK_ROLL_DIV_NAME[p->roll_div[pad] % BRK_ROLL_DIVS]);
     }
-    mq_kind = 0u;                        /* (the pads' pictures: always MOUSTIQUE) */
     mq_tick(now, 0);
     mq_cam_F *= .56f;                    /* (smaller: 96 rows) */
     mq_cy = (float)(FX_Y + 54);
@@ -743,7 +743,6 @@ static void draw_fx(int pad, const brk_status_t *st, uint32_t now)
         cv_oy = 0;
         cv_blit(0, FX_Y + (uint32_t)top);
     }
-    mq_kind = kind;
 }
 
 /* the demo's lights: the buttons' comet (the start screen's PATH), the white key of the step, the black keys held */

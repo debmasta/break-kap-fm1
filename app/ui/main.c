@@ -308,7 +308,7 @@ static void input(void)
         }
     }
     {                                    /* SCÈNE (BREAK KAP FM-1): HOME held 0.7 s alone shows MOUSTIQUE on the whole
-                                          * screen, everything else still playing; again, PANTIN; again, back */
+                                          * screen, everything else still playing; again, the other character; again, back */
         static uint32_t home_t0;
         static uint8_t home_long;
         if (bdn & 1u << B_HOME) {
